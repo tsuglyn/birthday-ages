@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#f7f7f8">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Birthday Ages">
+  <title>Birthday Ages</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="icon.svg">
+  <style>
+    :root { font-family: -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:#1d1d1f; background:#f7f7f8; }
+    * { box-sizing:border-box; }
+    body { margin:0; padding:env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+    main { max-width:720px; margin:auto; padding:20px 0 40px; }
+    h1 { font-size:32px; margin:8px 0 4px; }
+    .sub { color:#6e6e73; margin:0 0 20px; }
+    .card { background:white; border:1px solid #dedee3; border-radius:18px; padding:16px; margin:12px 0; }
+    label { display:block; font-size:13px; color:#6e6e73; margin:12px 0 5px; }
+    input { width:100%; min-height:48px; font-size:17px; padding:10px 12px; border:1px solid #c7c7cc; border-radius:12px; background:#fff; }
+    button { min-height:44px; border:0; border-radius:12px; padding:10px 14px; font-size:16px; font-weight:600; cursor:pointer; }
+    .primary { background:#0a84ff; color:white; width:100%; margin-top:14px; }
+    .secondary { background:#ececf1; color:#1d1d1f; }
+    .danger { background:#fff0f0; color:#b42318; }
+    .row { display:flex; gap:8px; flex-wrap:wrap; }
+    .row button { flex:1 1 130px; }
+    .personTop { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; }
+    .name { font-size:20px; font-weight:700; }
+    .age { font-size:20px; font-weight:700; white-space:nowrap; }
+    .meta { color:#6e6e73; margin-top:5px; line-height:1.45; }
+    .soon { margin-top:10px; font-weight:600; }
+    .today { color:#b54708; }
+    .empty { text-align:center; color:#6e6e73; padding:24px 10px; }
+    #message { min-height:22px; margin-top:8px; color:#b42318; }
+    dialog { width:min(92vw,520px); border:0; border-radius:18px; padding:0; box-shadow:0 12px 40px #0003; }
+    dialog::backdrop { background:#0005; }
+    dialog .inside { padding:18px; }
+    .small { font-size:13px; color:#6e6e73; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Birthday Ages</h1>
+  <p class="sub">Ages, upcoming birthdays and one-week calendar reminders.</p>
+
+  <section class="card" aria-labelledby="formTitle">
+    <h2 id="formTitle" style="margin:0;font-size:20px">Add a birthday</h2>
+    <form id="personForm">
+      <input type="hidden" id="editId">
+      <label for="first">First name</label>
+      <input id="first" autocomplete="given-name" required>
+      <label for="last">Last name</label>
+      <input id="last" autocomplete="family-name" required>
+      <label for="dob">Date of birth (DD/MM/YYYY)</label>
+      <input id="dob" inputmode="numeric" placeholder="14/10/1958" maxlength="10" required>
+      <div id="message" role="alert"></div>
+      <button class="primary" type="submit" id="saveBtn">Save birthday</button>
+      <button class="secondary" type="button" id="cancelEdit" hidden style="width:100%;margin-top:8px">Cancel editing</button>
+    </form>
+  </section>
+
+  <section aria-labelledby="listTitle">
+    <h2 id="listTitle" style="font-size:22px;margin:24px 0 8px">Upcoming birthdays</h2>
+    <div id="people"></div>
+  </section>
+
+  <dialog id="helpDialog">
+    <div class="inside">
+      <h2 style="margin-top:0">Calendar reminder</h2>
+      <p>The downloaded calendar event repeats every year and contains an alert seven days before the birthday.</p>
+      <p class="small">On iPhone, open the downloaded .ics file and add the event to Calendar. iOS may ask you to confirm the import.</p>
+      <button class="primary" type="button" id="closeHelp">OK</button>
+    </div>
+  </dialog>
+</main>
+
+<script>
+(() => {
+  "use strict";
+  const KEY = "birthdayAges.people.v1";
+  const $ = id => document.getElementById(id);
+  const form = $("personForm"), peopleEl = $("people"), msg = $("message");
+
+  function load() {
+    try { return JSON.parse(localStorage.getItem(KEY) || "[]"); } catch { return []; }
+  }
+  function save(items) { localStorage.setItem(KEY, JSON.stringify(items)); }
+  function pad(n){ return String(n).padStart(2,"0"); }
+
+  function parseUK(s) {
+    const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s.trim());
+    if (!m) return null;
+    const d=+m[1], mo=+m[2], y=+m[3];
+    const dt = new Date(Date.UTC(y,mo-1,d));
+    if (dt.getUTCFullYear()!==y || dt.getUTCMonth()!==mo-1 || dt.getUTCDate()!==d) return null;
+    const now = new Date();
+    const todayUTC = Date.UTC(now.getFullYear(),now.getMonth(),now.getDate());
+    if (dt.getTime() > todayUTC || y < 1800) return null;
+    return {d,mo,y};
+  }
+
+  function todayParts() {
+    const n = new Date();
+    return {d:n.getDate(),mo:n.getMonth()+1,y:n.getFullYear()};
+  }
+  function utc(parts){ return Date.UTC(parts.y,parts.mo-1,parts.d); }
+
+  function safeBirthdayDate(year, mo, d) {
+    if (mo===2 && d===29) {
+      const leap = new Date(Date.UTC(year,1,29)).getUTCDate()===29;
+      if (!leap) d=28;
+    }
+    return {y:year,mo,d};
+  }
+
+  function ageFor(dob) {
+    const t=todayParts();
+    let age=t.y-dob.y;
+    const b=safeBirthdayDate(t.y,dob.mo,dob.d);
+    if (t.mo<b.mo || (t.mo===b.mo && t.d<b.d)) age--;
+    return age;
+  }
+
+  function nextBirthday(dob) {
+    const t=todayParts();
+    let b=safeBirthdayDate(t.y,dob.mo,dob.d);
+    if (utc(b) < utc(t)) b=safeBirthdayDate(t.y+1,dob.mo,dob.d);
+    const days=Math.round((utc(b)-utc(t))/86400000);
+    return {parts:b, days};
+  }
+
+  function fmt(p){ return `${pad(p.d)}/${pad(p.mo)}/${p.y}`; }
+  function longFmt(p){
+    return new Intl.DateTimeFormat("en-GB",{day:"numeric",month:"long",year:"numeric",timeZone:"UTC"})
+      .format(new Date(utc(p)));
+  }
+  function esc(s){ return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+
+  function render() {
+    const items=load().map(x=>({...x,dob:parseUK(x.dob)})).filter(x=>x.dob);
+    items.sort((a,b)=>nextBirthday(a.dob).days-nextBirthday(b.dob).days || a.last.localeCompare(b.last));
+    if (!items.length) {
+      peopleEl.innerHTML='<div class="card empty">No birthdays saved yet.</div>';
+      return;
+    }
+    peopleEl.innerHTML=items.map(p=>{
+      const n=nextBirthday(p.dob), age=ageFor(p.dob);
+      const nextAge = n.days===0 ? age : age+1;
+      const when=n.days===0 ? "🎂 Birthday today" : n.days===1 ? "Birthday tomorrow" : `Birthday in ${n.days} days`;
+      return `<article class="card">
+        <div class="personTop">
+          <div class="name">${esc(p.first)} ${esc(p.last)}</div>
+          <div class="age">Age ${age}</div>
+        </div>
+        <div class="meta">Born ${fmt(p.dob)}<br>Next birthday: ${longFmt(n.parts)} · turns ${nextAge}</div>
+        <div class="soon ${n.days===0?"today":""}">${when}</div>
+        <div class="row" style="margin-top:14px">
+          <button type="button" class="secondary cal" data-id="${p.id}">Add to Calendar</button>
+          <button type="button" class="secondary edit" data-id="${p.id}">Edit</button>
+          <button type="button" class="danger del" data-id="${p.id}">Delete</button>
+        </div>
+      </article>`;
+    }).join("");
+  }
+
+  function icsEscape(s){ return s.replace(/\\/g,"\\\\").replace(/,/g,"\\,").replace(/;/g,"\\;").replace(/\n/g,"\\n"); }
+  function downloadICS(person) {
+    const dob=parseUK(person.dob), n=nextBirthday(dob), p=n.parts;
+    const start=`${p.y}${pad(p.mo)}${pad(p.d)}`;
+    const nextDay=new Date(Date.UTC(p.y,p.mo-1,p.d+1));
+    const end=`${nextDay.getUTCFullYear()}${pad(nextDay.getUTCMonth()+1)}${pad(nextDay.getUTCDate())}`;
+    const full=`${person.first} ${person.last}`.trim();
+    const uid=`birthday-${person.id}@birthday-ages.local`;
+    const stamp=new Date().toISOString().replace(/[-:]/g,"").replace(/\.\d{3}Z$/,"Z");
+    const text=[
+      "BEGIN:VCALENDAR","VERSION:2.0","CALSCALE:GREGORIAN","PRODID:-//Birthday Ages//EN",
+      "BEGIN:VEVENT",`UID:${uid}`,`DTSTAMP:${stamp}`,`DTSTART;VALUE=DATE:${start}`,`DTEND;VALUE=DATE:${end}`,
+      `RRULE:FREQ=YEARLY`, `SUMMARY:${icsEscape(full)} — Birthday 🎂`,
+      "BEGIN:VALARM","ACTION:DISPLAY","TRIGGER:-P7D",`DESCRIPTION:${icsEscape(full)}'s birthday is in one week.`,"END:VALARM",
+      "END:VEVENT","END:VCALENDAR"
+    ].join("\r\n");
+    const blob=new Blob([text],{type:"text/calendar;charset=utf-8"});
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;
+    a.download=`${full.replace(/[^a-z0-9]+/gi,"_")}_Birthday.ics`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    $("helpDialog").showModal();
+  }
+
+  form.addEventListener("submit",e=>{
+    e.preventDefault(); msg.textContent="";
+    const dob=parseUK($("dob").value);
+    if(!dob){ msg.textContent="Please enter a valid past date as DD/MM/YYYY."; return; }
+    const first=$("first").value.trim(), last=$("last").value.trim();
+    if(!first || !last){ msg.textContent="Please enter both first and last name."; return; }
+    const items=load(), id=$("editId").value;
+    if(id){
+      const i=items.findIndex(x=>x.id===id);
+      if(i>=0) items[i]={...items[i],first,last,dob:fmt(dob)};
+    } else {
+      items.push({id:crypto.randomUUID ? crypto.randomUUID() : String(Date.now()),first,last,dob:fmt(dob)});
+    }
+    save(items); form.reset(); $("editId").value=""; $("formTitle").textContent="Add a birthday";
+    $("saveBtn").textContent="Save birthday"; $("cancelEdit").hidden=true; render();
+  });
+
+  peopleEl.addEventListener("click",e=>{
+    const b=e.target.closest("button"); if(!b) return;
+    const items=load(), p=items.find(x=>x.id===b.dataset.id); if(!p) return;
+    if(b.classList.contains("cal")) downloadICS(p);
+    if(b.classList.contains("edit")){
+      $("first").value=p.first; $("last").value=p.last; $("dob").value=p.dob; $("editId").value=p.id;
+      $("formTitle").textContent="Edit birthday"; $("saveBtn").textContent="Save changes"; $("cancelEdit").hidden=false;
+      window.scrollTo({top:0,behavior:"smooth"});
+    }
+    if(b.classList.contains("del")){
+      if(confirm(`Delete ${p.first} ${p.last}?`)){ save(items.filter(x=>x.id!==p.id)); render(); }
+    }
+  });
+
+  $("cancelEdit").addEventListener("click",()=>{ form.reset(); $("editId").value=""; $("formTitle").textContent="Add a birthday"; $("saveBtn").textContent="Save birthday"; $("cancelEdit").hidden=true; msg.textContent=""; });
+  $("closeHelp").addEventListener("click",()=>$("helpDialog").close());
+
+  $("dob").addEventListener("input",e=>{
+    let v=e.target.value.replace(/\D/g,"").slice(0,8);
+    if(v.length>4) v=v.slice(0,2)+"/"+v.slice(2,4)+"/"+v.slice(4);
+    else if(v.length>2) v=v.slice(0,2)+"/"+v.slice(2);
+    e.target.value=v;
+  });
+
+  if("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(()=>{});
+  render();
+})();
+</script>
+</body>
+</html>
