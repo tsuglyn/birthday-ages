@@ -150,10 +150,13 @@
       const when=n.days===0 ? "🎂 Birthday today" : n.days===1 ? "Birthday tomorrow" : `Birthday in ${n.days} days`;
       return `<article class="card">
         <div class="personTop">
-          <div class="name">${esc(p.first)} ${esc(p.last)}</div>
-          <div class="age">Age ${age}</div>
-        </div>
-        <div class="meta">Born ${fmt(p.dob)}<br>Next birthday: ${longFmt(n.parts)} · turns ${nextAge}</div>
+  <div class="name">${esc(p.first)} ${esc(p.last)}</div>
+</div>
+<div class="meta">
+  Born ${fmt(p.dob)}<br>
+  <strong>Current age: ${age}</strong><br>
+  <strong>Next birthday: ${longFmt(n.parts)} — turns ${nextAge} 🎂</strong>
+</div>
         <div class="soon ${n.days===0?"today":""}">${when}</div>
         <div class="row" style="margin-top:14px">
           <button type="button" class="secondary cal" data-id="${p.id}">Add to Calendar</button>
